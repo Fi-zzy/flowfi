@@ -302,6 +302,56 @@ describe("StreamDetailsContent loading skeleton", () => {
       expect(screen.getAllByText(/12\.3456789 XLM/).length).toBeGreaterThanOrEqual(1);
     });
   });
+
+  it("ignores an older successful stream response after the route changes", async () => {
+    let resolveOld!: (value: Response) => void;
+    let resolveCurrent!: (value: Response) => void;
+    const oldResponse = new Promise<Response>((resolve) => { resolveOld = resolve; });
+    const currentResponse = new Promise<Response>((resolve) => { resolveCurrent = resolve; });
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/streams/42")) return oldResponse;
+      if (url.endsWith("/streams/43")) return currentResponse;
+      return Promise.resolve({ ok: true, json: async () => ({ events: [], total: 0 }) } as Response);
+    }) as typeof fetch;
+
+    const { rerender } = render(<StreamDetailsContent streamId="42" />);
+    rerender(<StreamDetailsContent streamId="43" />);
+    await act(async () => {
+      resolveCurrent({ ok: true, json: async () => ({ ...createMockStream(), streamId: 43 }) } as Response);
+    });
+    await waitFor(() => expect(screen.getAllByText(/stream #43/i).length).toBeGreaterThan(0));
+
+    await act(async () => {
+      resolveOld({ ok: true, json: async () => createMockStream() } as Response);
+    });
+    expect(screen.getAllByText(/stream #43/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/stream #42/i)).not.toBeInTheDocument();
+  });
+
+  it("does not show an error from an older request after the route changes", async () => {
+    let rejectOld!: (error: Error) => void;
+    let resolveCurrent!: (value: Response) => void;
+    const oldResponse = new Promise<Response>((_, reject) => { rejectOld = reject; });
+    const currentResponse = new Promise<Response>((resolve) => { resolveCurrent = resolve; });
+    global.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/streams/42")) return oldResponse;
+      if (url.endsWith("/streams/43")) return currentResponse;
+      return Promise.resolve({ ok: true, json: async () => ({ events: [], total: 0 }) } as Response);
+    }) as typeof fetch;
+
+    const { rerender } = render(<StreamDetailsContent streamId="42" />);
+    rerender(<StreamDetailsContent streamId="43" />);
+    await act(async () => {
+      resolveCurrent({ ok: true, json: async () => ({ ...createMockStream(), streamId: 43 }) } as Response);
+    });
+    await waitFor(() => expect(screen.getAllByText(/stream #43/i).length).toBeGreaterThan(0));
+    await act(async () => { rejectOld(new Error("stale network failure")); });
+
+    expect(screen.getAllByText(/stream #43/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/stale network failure/i)).not.toBeInTheDocument();
+  });
 });
 
 // ─── Helper: render the fully-loaded component ────────────────────────────
